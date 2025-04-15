@@ -118,7 +118,7 @@ mean_comparison_anchor <- function(
     lambda_type = 'lambda.1se',
     n_folds = 10,
     group = NULL,
-    # standardize_feature = FALSE,
+    standardize_feature = TRUE,
     verbose = TRUE
 ) {
   # ============================================
@@ -128,6 +128,15 @@ mean_comparison_anchor <- function(
   treatment <- validate_and_convert_data(treatment, "treatment")
   
   check_non_null_and_identical_colnames(list(control, treatment))
+  
+  if(standardize_feature){
+    # Normalize and split
+    normalized_list <- normalize_and_split(control, treatment)
+    
+    # Access results
+    control <- normalized_list$df1
+    treatment <- normalized_list$df2
+  }
   
   pca_method <- match.arg(pca_method) #match.arg takes the first argument of pca_method as the default value
   classifier_method <- match.arg(classifier_method)
