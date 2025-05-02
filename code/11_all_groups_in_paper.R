@@ -11,7 +11,7 @@ library(doParallel)
 # Setup directories
 data_directory <- '/raid6/Tianyu/convergence_risk_gene/try_Cleary_data/'
 work_directory <- '/raid6/Tianyu/SingleCell/cleary_data_mean_comparison/'
-batch_name <- '11_all_groups'
+batch_name <- '11_all_groups_sparse'
 
 source(glue('{data_directory}R/convergence.R'))
 source(glue("{work_directory}R/anchored_lasso.R"))
@@ -55,38 +55,65 @@ preprocess_one_setting <- function(residual_subset, treatment_name, clustering){
 }
 
 # Register parallel backend
-n_cores <- 10
+n_cores <- 25
 cl <- makeCluster(n_cores)
 registerDoParallel(cl)
 
 log_file <- glue('{work_directory}log/logs.txt')
+log_dir <- glue('{work_directory}log/')
+log_files <- list.files(log_dir, full.names = TRUE)
+file.remove(log_files)
 
-# Parallel processing
-foreach(treatment_name = all_treatment_names, .packages = c("data.table", "glue", "grpreg", "HMC")) %dopar% {
-  tryCatch({
-    message(glue("Processing {treatment_name}"))
-    log_message <- glue("{Sys.time()} - Processing {treatment_name}\n")
-    write(log_message, file = log_file, append = TRUE)
-    
-    process_data <- preprocess_one_setting(residual_subset, treatment_name, clustering)
-    
-    test_result <- mean_comparison_anchor(
-      control = process_data$control,
-      treatment = process_data$treatment,
-      pca_method = "sparse_pca",
-      classifier_method = "group_lasso",
-      lambda_type = "lambda.min",
-      n_folds = 5,
-      group = clustering$cluster_index,
-      verbose = FALSE
-    )
-    
-    output_filename <- glue('{work_directory}data/intermediate/{batch_name}/{treatment_name}.rds')
-    saveRDS(test_result, file = output_filename)
-  }, error = function(e) {
-    warning(glue("Failed to process {treatment_name}: {e$message}"))
-  })
-}
+foreach(treatment_name = all_treatment_names,
+        .packages = c("data.table", "glue", "grpreg", "HMC")) %dopar% {
+          tryCatch({
+            # Define log file path
+            treatment_log_file <- paste0(work_directory, 'log/', treatment_name, '.log')
+            
+            # Open file connections
+            log_con_out <- file(treatment_log_file, open = "wt")
+            log_con_msg <- file(treatment_log_file, open = "at")
+            
+            # Ensure cleanup on exit
+            on.exit({
+              sink(NULL, type = "message")
+              sink(NULL)
+              close(log_con_out)
+              close(log_con_msg)
+            }, add = TRUE)
+            
+            # Redirect output
+            sink(log_con_out, split = TRUE)
+            sink(log_con_msg, type = "message", append = TRUE)
+            
+            cat(glue("Processing {treatment_name}\n"))
+            cat(glue("{Sys.time()} - Starting...\n"))
+            
+            process_data <- preprocess_one_setting(residual_subset, treatment_name, clustering)
+            
+            test_result <- mean_comparison_anchor(
+              control = process_data$control,
+              treatment = process_data$treatment,
+              pca_method = "sparse_pca",
+              classifier_method = "group_lasso",
+              lambda_type = "lambda.min",
+              n_folds = 5,
+              group = clustering$cluster_index,
+              verbose = TRUE
+            )
+            
+            output_filename <- paste0(work_directory, 'data/intermediate/', batch_name,'/', treatment_name, '.rds')
+            saveRDS(test_result, file = output_filename)
+            
+            cat(glue("{Sys.time()} - Finished successfully.\n"))
+            
+          }, error = function(e) {
+            # Capture error in a central log (optional)
+            central_log <- glue('{work_directory}log/errors.log')
+            write(glue("[{Sys.time()}] Error for {treatment_name}: {e$message}"), 
+                  file = central_log, append = TRUE)
+          })
+        }
 
 # Stop cluster
 stopCluster(cl)

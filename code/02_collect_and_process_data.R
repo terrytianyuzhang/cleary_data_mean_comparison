@@ -73,8 +73,7 @@ summary_dt$test_statistic <- summary_dt$test_statistic.V1
 # Step 1: expand the active group list
 summary_long <- summary_dt[, .(
   group = unlist(strsplit(active_groups, ",\\s*")),
-  p_value = p_value,
-  treatment = treatment
+  p_value = p_value
 ), by = treatment]
 
 # Step 2: convert group to integer (optional)
@@ -82,20 +81,26 @@ summary_long[, group := as.integer(group)]
 
 # Step 3: for visualization, use -log10(p) as color intensity
 summary_long[, log10_p := -log10(p_value)]
+# Step 4: Cast to wide format (rows = groups, columns = treatments)
+heatmap_data <- dcast(
+  summary_long,
+  group ~ treatment,
+  value.var = "log10_p",
+  fill = 0
+)
 
-# Step 4: spread to wide format
-heatmap_data <- summary_long %>%
-  pivot_wider(names_from = treatment, values_from = log10_p, values_fill = 0)
+# Step 5: Melt back to long format for ggplot
+heatmap_long <- melt(
+  heatmap_data,
+  id.vars = "group",
+  variable.name = "treatment",
+  value.name = "log10_p"
+)
 
-# Step 5: convert back to long format for ggplot
-heatmap_long <- heatmap_data %>%
-  pivot_longer(cols = -group, names_to = "treatment", values_to = "log10_p")
-
-# Step 6: plot
+# Step 6: Plot heatmap
 ggplot(heatmap_long, aes(x = treatment, y = factor(group), fill = log10_p)) +
   geom_tile(color = "white") +
   scale_fill_gradient(low = "white", high = "red", name = expression(-log[10](p))) +
   labs(x = "Treatment", y = "Active Group", title = "Heatmap of Active Groups by Treatment") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-

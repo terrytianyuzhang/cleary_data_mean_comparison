@@ -24,7 +24,7 @@ process_fold_mean_diff <- function(fold_index, control, treatment,
   })
   
   # Estimate Principal Component and Projection Direction
-  leanding_pc <- estimate_leading_pc(control_train)
+  leading_pc <- estimate_leading_pc(control_train, pca_method)
   
   # ===================================================
   # Compute adjusted projection direction
@@ -33,7 +33,7 @@ process_fold_mean_diff <- function(fold_index, control, treatment,
   a_n <- n_effect^(1/3)  # Scaling factor based on effective sample size
   
   # Adjust projection direction using Lasso coefficients and normalize
-  proj_direction <- (leanding_pc + a_n * classifier_coef)  # Adjustment
+  proj_direction <- (leading_pc + a_n * classifier_coef)  # Adjustment
   proj_direction <- proj_direction / norm(proj_direction, type = "2")  # Normalize
   
   # ===================================================
@@ -65,7 +65,8 @@ process_fold_mean_diff <- function(fold_index, control, treatment,
     tr_score = tr_score,
     proj_direction = proj_direction,
     classifier_coef = classifier_coef,
-    leanding_pc = leanding_pc
+    leading_pc = leading_pc,
+    group = group
   ))
 }
 
@@ -138,7 +139,7 @@ mean_comparison_anchor <- function(
     treatment <- normalized_list$df2
   }
   
-  pca_method <- match.arg(pca_method) #match.arg takes the first argument of pca_method as the default value
+  pca_method <- match.arg(pca_method) #match.arg takes the first argument of pca_method as the default value if not specified
   classifier_method <- match.arg(classifier_method)
   
   if (!is.null(group) && classifier_method == 'lasso'){
@@ -177,4 +178,95 @@ mean_comparison_anchor <- function(
   # ===================================================
   return(combine_folds_mean_diff(fold_data, verbose))
   
+}
+
+# ---------------------------
+# Post-hoc Analysis Function
+# ---------------------------
+
+compute_predictive_contributions <- function(result, group, group_threshold = 5) {
+  # ============================================
+  # Step 1: Stack classifier coefficients
+  # ============================================
+  n_folds <- length(result$fold_data)
+  beta_matrix <- do.call(rbind, lapply(1:n_folds, function(i) result$fold_data[[i]]$classifier_coef))
+  colnames(beta_matrix) <- names(result$fold_data[[1]]$classifier_coef)
+  
+  # ============================================
+  # Step 2: Average beta coefficients across folds
+  # ============================================
+  avg_beta <- colMeans(beta_matrix)
+  
+  # ============================================
+  # Step 3: Identify active groups based on threshold
+  # ============================================
+  active <- collect_active_features_proj(result, group = group, group_threshold = group_threshold)
+  active_groups <- active$active_groups
+  
+  # ============================================
+  # Step 4: Compute group-wise contributions
+  # ============================================
+  contribution_scores <- numeric(length(active_groups) + 1)
+  names(contribution_scores) <- c(active_groups, "other")
+  
+  for (group_index in seq_along(active_groups)) {
+    sub_classifier <- avg_beta[group == active_groups[group_index]]
+    contribution_scores[group_index] <- sum(sub_classifier^2) / sum(avg_beta^2) 
+  }
+  
+  contribution_scores["other"] <- sum(avg_beta^2) - sum(contribution_scores)
+  
+  # ============================================
+  # Step 5: Convert to data frame
+  # ============================================
+  contribution_df <- data.frame(
+    group = names(contribution_scores),
+    score = as.numeric(contribution_scores)
+  )
+  
+  return(contribution_df)
+}
+
+
+collect_active_features_proj <- function(test_result, voting_method = c("majority_voting"), 
+                                    group = NULL, group_threshold = 1) {
+  fold_data <- test_result$fold_data
+  voting_method <- match.arg(voting_method)
+  n_folds <- length(fold_data)
+  active_features_list <- vector("list", n_folds)
+  
+  # Collect non-zero features for each fold
+  for (i in 1:n_folds) {
+    beta <- result$fold_data[[i]]$proj_direction
+    names(beta) <- names(result$fold_data[[i]]$classifier_coef)
+    
+    non_zero_features <- names(beta[abs(beta) > 1e-10])
+    active_features_list[[i]] <- non_zero_features
+  }
+  
+  # Flatten and count
+  all_active_features <- unlist(active_features_list)
+  feature_counts <- table(all_active_features)
+  
+  # Apply majority voting
+  if (voting_method == 'majority_voting') {
+    active_features <- names(feature_counts[feature_counts > n_folds / 2])
+  }
+  
+  # Group handling
+  if (!is.null(group)) {
+    if (is.null(names(group))) {
+      names(group) <- names(fold_data[[1]]$classifier_coef)
+    }
+    
+    group_nonzero_counts <- table(group[active_features])
+    active_groups <- names(group_nonzero_counts[group_nonzero_counts >= group_threshold])
+    
+    return(list(
+      active_features = active_features,
+      active_groups = active_groups
+    ))
+  }
+  
+  return(active_features)
 }

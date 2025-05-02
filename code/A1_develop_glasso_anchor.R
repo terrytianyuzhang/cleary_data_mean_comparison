@@ -60,12 +60,13 @@ for (i in 1:n_sim) {
   res <- mean_comparison_anchor(
     control = control,
     treatment = treatment,
-    pca_method = "dense_pca",
-    classifier_method = "lasso",
+    pca_method = "sparse_pca",
+    classifier_method = "group_lasso",
     lambda_type = "lambda.1se",
     n_folds = 5,
     verbose = FALSE,
-    standardize_feature = TRUE
+    standardize_feature = TRUE,
+    group = group
   )
   
   sim_results[i, ] <- c(res$test_statistic, res$p_value)
@@ -76,7 +77,7 @@ for (i in 1:n_sim) {
       Feature = paste0("V", 1:p),
       proj_direction = res$fold_data[[j]]$proj_direction,
       classifier_coef = res$fold_data[[j]]$classifier_coef,
-      leanding_pc = res$fold_data[[j]]$leanding_pc,
+      leading_pc = res$fold_data[[j]]$leading_pc,
       Fold = j,
       Sim = i
     )
@@ -90,7 +91,7 @@ projection_df <- bind_rows(all_projections)
 
 # Ensure proper ordering of features (V1, V2, ..., Vp)
 long_proj_df <- pivot_longer(projection_df,
-                             cols = c("proj_direction", "classifier_coef", "leanding_pc"),
+                             cols = c("proj_direction", "classifier_coef", "leading_pc"),
                              names_to = "Type", values_to = "Value")
 long_proj_df$Feature <- factor(long_proj_df$Feature,
                                levels = paste0("V", 1:p),
